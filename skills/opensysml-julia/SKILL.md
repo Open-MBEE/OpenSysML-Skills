@@ -1,0 +1,104 @@
+---
+name: opensysml-julia
+description: Use the Julia package `OpenSysML` (client/julia/OpenSysML in the OpenSysML repo, Connect-JSON over HTTP.jl) to parse, validate, evaluate, verify, execute, analyse, render, convert and edit SysML v2 models from Julia — `connect()`, `external(address)`, `private()`, binary provisioning variables, capability negotiation and typed errors. Use when scripting OpenSysML from Julia, Pluto or DrWatson projects.
+license: Apache-2.0
+metadata:
+  project: OpenSysML
+  upstream: https://github.com/Open-MBEE/OpenSysML
+---
+
+# OpenSysML from Julia
+
+The package lives in the OpenSysML repository (not yet in the General registry):
+
+```julia
+using Pkg
+Pkg.develop(path = "client/julia/OpenSysML")     # from a checkout; or Pkg.add(url=..., subdir="client/julia/OpenSysML")
+using OpenSysML
+```
+
+```julia
+conn = connect()                                  # $OPENSYSML_SERVICE if set, else a private sysml-grpc child
+try
+    model = parse_file(conn, "vehicle.sysml")
+    if !isok(model)
+        foreach(println, diagnostics(model))
+        error("The model has errors.")
+    end
+    println(evaluate(model, "mass"; subject = "Vehicles::myCar"))   # 1300.0
+finally
+    close(conn)                                   # stops a private child; external ones keep running
+end
+```
+
+`parse_source(conn, text)` parses a string; `parse_sources(conn, Dict(name => text))` parses
+several documents into one model.
+
+## Connections
+
+- `connect(; timeout=30, version=nothing, require_capabilities=[])` — `OPENSYSML_SERVICE`
+  when set, otherwise a private child. `version` refuses a service of another version;
+  `require_capabilities` refuses one missing a capability at connect time.
+- `external(address; ...)` — a service owned by another process (`"localhost:50051"`).
+- `private(; binary=nothing, ...)` — start a child directly. Julia has no fork model, so each
+  `private()` connection owns its own child; `close(conn)` stops it.
+- Binary resolution: `OPENSYSML_BINARY`, `OPENSYSML_GRPC_BINARY`, `~/.opensysml/bin/sysml-grpc`,
+  `PATH`; no implicit download. `OPENSYSML_GRPC_VERSION=latest` or a release tag enables a
+  download from `OPENSYSML_GITHUB_REPO` (default `Open-MBEE/OpenSysML`), with
+  `OPENSYSML_ALLOW_UNPINNED_DOWNLOAD` governing unpinned trust (`opensysml-install`).
+- `server_info(conn)` / `has_capability(conn, name)` report what the service advertises;
+  `resolve_binary()`, `ensure_binary()`, `download_binary()` manage the child's binary.
+
+Transport is Connect **JSON** over `HTTP.jl` (not protobuf), so it is the easiest client to
+compare against `curl` (`opensysml-service`); 64-bit integers arrive as strings and are
+converted for you.
+
+## Models, values and RPCs
+
+Functions take the model (or connection) first, Julia-style keywords for options:
+`isok`, `diagnostics`, `raise_for_errors`, `root`/`roots`, `get_symbol(model, "Pkg::x")`,
+`find`, `symbol`, `children`, `attributes`/`features`/`parts`, `facts`/`attribute_facts`
+(type facts: multiplicity, specializations), `evaluate(model, expr; subject)`,
+`instantiate(model, id)`, `feature_value`/`get_feature`/`get_attr` on instances,
+`verify_constraint(model, id; subject, engine)`, `verify_requirement`,
+`verify_satisfaction(model)`, `satisfied`, `validate_instance`, `calc(model, id, args)`,
+`run_analysis(model, id; ...)`, `run_sweep(model, id, ranges)`,
+`execute_action(model, id; inputs, schedule)`, `execute_state(model, id; events)`,
+`explore_analysis`, `query(model; ...)`, `documents(model)`, `export(...)` for graphs,
+`convert_model(model, "ttl")`/`to_turtle`/`to_api_json`/`to_sysml`/`save(model, path)`,
+`convert_file`/`convert_source`, `list_engines(conn)`, `server_info(conn)`,
+`has_capability(conn, name)`. Verdicts answer `holds`, `violated`, `undecided`, `valid`;
+runs expose `failures`.
+
+Values map to Julia types: `Float64`, `Int64`/`BigInt`, `Rational`, `Bool`, `String`,
+`Vector`, plus exported structs `Quantity` (with `Unit`; `in_unit`, `to_unit`,
+`same_value`), `EnumLiteral`, `InstanceRef`, `FunctionRef`, `Metaobject`, `ArrayValue`,
+`VectorValue`, `MeasurementRef`, `Infinity`, and the `Unset`/`Undetermined` answers —
+`as_quantity`/`as_enum_literal`/`as_object`/`as_str`/`as_typed` narrow before arithmetic.
+
+## Authoring
+
+`edit(model)` opens an editor; operations are collected and sent in one `ApplyEdits`, which rewrites only the edited spans;
+refusals are typed (`EditError` and subtypes such as `RenameReferencedError`,
+`DeleteReferencedError`, `MemberNameTakenError`, `OverlappingEditsError`,
+`OwnerNotFoundError`) and name the referrers (`Referrer`). `generate_source`/`generate_main`
+produce typed Julia modules from a model (see the README's "Typed generation").
+
+## Errors
+
+Julia exceptions subtype `OpenSysMLError`: `ConnectError`, `TransportError`,
+`ServiceError`/`ServiceCallError` (canonical code), `ServiceUnavailableError`,
+`ServiceTimeoutError`, `StaleServiceError`, `MissingCapabilityError`,
+`UnsupportedOperationError`, `ChecksumMismatchError`, `UnpinnedReleaseError`,
+`ModelError`, `ModelNotFoundError`, `ModelFileNotFoundError`, `SymbolNotFoundError`,
+`DiagnosticError` (from `raise_for_errors`), `ExecutionError`, `WrongKindError`,
+`ConversionError`, `MigrationError`, `QueryError`, `DocumentQueryError`,
+`TypeMismatchError`, `UnsupportedValueError`, `IncommensurableUnitsError`, `EditError`.
+A model with diagnostics or a false verdict is a value, not an exception — test
+`isok(model)` and `holds(verdict)`.
+
+Not provided: in-process execution, protobuf transport, typed stub generation (see the
+package README's "Not provided"). Budgets/solver variables (`OPENSYSML_MAX_*`, `OPENSYSML_SMT`)
+go in the environment of the Julia process (private child) or of the shared service
+(`opensysml-troubleshooting`). Run `Pkg.test("OpenSysML")` with `OPENSYSML_SERVICE` or a
+local `bin/sysml-grpc` to confirm the setup.
